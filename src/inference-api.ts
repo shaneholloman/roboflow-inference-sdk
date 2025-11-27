@@ -8,12 +8,9 @@ export interface WebRTCWorkerConfig {
    */
   workflowsParameters?: Record<string, any>;
   /**
-   * WebRTC configuration to pass to the server API
-   * This is passed to the /initialise_webrtc_worker endpoint's webrtc_turn_config field.
+   * ICE servers for WebRTC connections (used for both client and server)
    */
-  webrtcConfig?: {
-    iceServers?: RTCIceServerConfig[];
-  };
+  iceServers?: RTCIceServerConfig[];
   /**
    * Processing timeout in seconds (serverless only)
    * @default 600
@@ -38,7 +35,7 @@ export interface WebRTCWorkerConfig {
  * symmetric NAT or restrictive firewalls.
  */
 export interface RTCIceServerConfig {
-  urls: string | string[];
+  urls: string[];
   username?: string;
   credential?: string;
 }
@@ -73,29 +70,22 @@ export interface WebRTCParams {
    */
   workflowsParameters?: Record<string, any>;
   /**
-   * Custom ICE servers for RTCPeerConnection (client-side)
+   * ICE servers for WebRTC connections (used for both client and server)
    *
    * Use this to specify custom STUN/TURN servers for users behind
-   * symmetric NAT or restrictive firewalls.
+   * symmetric NAT or restrictive firewalls. The same configuration is
+   * used for both the client-side RTCPeerConnection and sent to the
+   * server via webrtc_config.
    *
    * @example
    * ```typescript
    * iceServers: [
    *   { urls: ["stun:stun.l.google.com:19302"] },
-   *   { urls: "turn:turn.example.com:3478", username: "user", credential: "pass" }
+   *   { urls: ["turn:turn.example.com:3478"], username: "user", credential: "pass" }
    * ]
    * ```
    */
   iceServers?: RTCIceServerConfig[];
-  /**
-   * WebRTC configuration to pass to the server API
-   *
-   * This is passed to the /initialise_webrtc_worker endpoint's webrtc_turn_config field.
-   * Use this when the server needs to know about your TURN configuration.
-   */
-  webrtcConfig?: {
-    iceServers?: RTCIceServerConfig[];
-  };
   /**
    * Processing timeout in seconds (serverless only)
    * @default 600
@@ -198,7 +188,7 @@ export class InferenceHTTPClient {
       dataOutputNames = ["string"],
       threadPoolWorkers = 4,
       workflowsParameters = {},
-      webrtcConfig,
+      iceServers,
       processingTimeout,
       requestedPlan,
       requestedRegion
@@ -229,7 +219,7 @@ export class InferenceHTTPClient {
         sdp: offer.sdp,
         type: offer.type
       },
-      webrtc_turn_config: webrtcConfig ?? null,
+      webrtc_config: iceServers ? { iceServers } : null,
       stream_output: streamOutputNames,
       data_output: dataOutputNames
     };
@@ -244,7 +234,7 @@ export class InferenceHTTPClient {
     if (requestedRegion !== undefined) {
       payload.requested_region = requestedRegion;
     }
-
+    console.trace("payload", payload);
     const response = await fetch(`${this.serverUrl}/initialise_webrtc_worker`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -313,7 +303,7 @@ export const connectors = {
     return {
       connectWrtc: async (offer: WebRTCOffer, wrtcParams: WebRTCParams): Promise<WebRTCWorkerResponse> => {
         const client = InferenceHTTPClient.init({ apiKey, serverUrl });
-
+        console.log("wrtcParams", wrtcParams);
         const answer = await client.initializeWebrtcWorker({
           offer,
           workflowSpec: wrtcParams.workflowSpec,
@@ -325,7 +315,7 @@ export const connectors = {
             dataOutputNames: wrtcParams.dataOutputNames,
             threadPoolWorkers: wrtcParams.threadPoolWorkers,
             workflowsParameters: wrtcParams.workflowsParameters,
-            webrtcConfig: wrtcParams.webrtcConfig,
+            iceServers: wrtcParams.iceServers,
             processingTimeout: wrtcParams.processingTimeout,
             requestedPlan: wrtcParams.requestedPlan,
             requestedRegion: wrtcParams.requestedRegion
@@ -376,7 +366,7 @@ export const connectors = {
    *       dataOutputNames: wrtcParams.dataOutputNames,
    *       threadPoolWorkers: wrtcParams.threadPoolWorkers,
    *       workflowsParameters: wrtcParams.workflowsParameters,
-   *       webrtcConfig: wrtcParams.webrtcConfig,
+   *       iceServers: wrtcParams.iceServers,
    *       processingTimeout: wrtcParams.processingTimeout,
    *       requestedPlan: wrtcParams.requestedPlan,
    *       requestedRegion: wrtcParams.requestedRegion
