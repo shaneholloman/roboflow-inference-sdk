@@ -3,6 +3,44 @@ export interface WebRTCWorkerConfig {
   streamOutputNames?: string[];
   dataOutputNames?: string[];
   threadPoolWorkers?: number;
+  /**
+   * Workflow parameters to pass to the workflow execution
+   */
+  workflowsParameters?: Record<string, any>;
+  /**
+   * WebRTC configuration to pass to the server API
+   * This is passed to the /initialise_webrtc_worker endpoint's webrtc_turn_config field.
+   */
+  webrtcConfig?: {
+    iceServers?: RTCIceServerConfig[];
+  };
+  /**
+   * Processing timeout in seconds (serverless only)
+   * @default 600
+   */
+  processingTimeout?: number;
+  /**
+   * Requested compute plan (serverless only)
+   * @example "webrtc-gpu-small"
+   */
+  requestedPlan?: string;
+  /**
+   * Requested region for processing (serverless only)
+   * @example "us"
+   */
+  requestedRegion?: string;
+}
+
+/**
+ * ICE server configuration for WebRTC connections
+ *
+ * Use this to configure custom STUN/TURN servers for users behind
+ * symmetric NAT or restrictive firewalls.
+ */
+export interface RTCIceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
 }
 
 export interface WebRTCOffer {
@@ -30,6 +68,49 @@ export interface WebRTCParams {
   streamOutputNames?: string[];
   dataOutputNames?: string[];
   threadPoolWorkers?: number;
+  /**
+   * Workflow parameters to pass to the workflow execution
+   */
+  workflowsParameters?: Record<string, any>;
+  /**
+   * Custom ICE servers for RTCPeerConnection (client-side)
+   *
+   * Use this to specify custom STUN/TURN servers for users behind
+   * symmetric NAT or restrictive firewalls.
+   *
+   * @example
+   * ```typescript
+   * iceServers: [
+   *   { urls: ["stun:stun.l.google.com:19302"] },
+   *   { urls: "turn:turn.example.com:3478", username: "user", credential: "pass" }
+   * ]
+   * ```
+   */
+  iceServers?: RTCIceServerConfig[];
+  /**
+   * WebRTC configuration to pass to the server API
+   *
+   * This is passed to the /initialise_webrtc_worker endpoint's webrtc_turn_config field.
+   * Use this when the server needs to know about your TURN configuration.
+   */
+  webrtcConfig?: {
+    iceServers?: RTCIceServerConfig[];
+  };
+  /**
+   * Processing timeout in seconds (serverless only)
+   * @default 600
+   */
+  processingTimeout?: number;
+  /**
+   * Requested compute plan (serverless only)
+   * @example "webrtc-gpu-small"
+   */
+  requestedPlan?: string;
+  /**
+   * Requested region for processing (serverless only)
+   * @example "us"
+   */
+  requestedRegion?: string;
 }
 
 export interface Connector {
@@ -115,13 +196,19 @@ export class InferenceHTTPClient {
       imageInputName = "image",
       streamOutputNames = [],
       dataOutputNames = ["string"],
-      threadPoolWorkers = 4
+      threadPoolWorkers = 4,
+      workflowsParameters = {},
+      webrtcConfig,
+      processingTimeout,
+      requestedPlan,
+      requestedRegion
     } = config;
 
     // Build workflow_configuration based on what's provided
     const workflowConfiguration: any = {
       type: "WorkflowConfiguration",
       image_input_name: imageInputName,
+      workflows_parameters: workflowsParameters,
       workflows_thread_pool_workers: threadPoolWorkers,
       cancel_thread_pool_tasks_on_exit: true,
       video_metadata_input_name: "video_metadata"
@@ -134,7 +221,7 @@ export class InferenceHTTPClient {
       workflowConfiguration.workflow_id = workflowId;
     }
 
-    const payload = {
+    const payload: Record<string, any> = {
       workflow_configuration: workflowConfiguration,
       api_key: this.apiKey,
       webrtc_realtime_processing: true,
@@ -142,10 +229,21 @@ export class InferenceHTTPClient {
         sdp: offer.sdp,
         type: offer.type
       },
-      webrtc_turn_config: null,
+      webrtc_turn_config: webrtcConfig ?? null,
       stream_output: streamOutputNames,
       data_output: dataOutputNames
     };
+
+    // Add serverless-specific fields if provided
+    if (processingTimeout !== undefined) {
+      payload.processing_timeout = processingTimeout;
+    }
+    if (requestedPlan !== undefined) {
+      payload.requested_plan = requestedPlan;
+    }
+    if (requestedRegion !== undefined) {
+      payload.requested_region = requestedRegion;
+    }
 
     const response = await fetch(`${this.serverUrl}/initialise_webrtc_worker`, {
       method: "POST",
@@ -225,7 +323,12 @@ export const connectors = {
             imageInputName: wrtcParams.imageInputName,
             streamOutputNames: wrtcParams.streamOutputNames,
             dataOutputNames: wrtcParams.dataOutputNames,
-            threadPoolWorkers: wrtcParams.threadPoolWorkers
+            threadPoolWorkers: wrtcParams.threadPoolWorkers,
+            workflowsParameters: wrtcParams.workflowsParameters,
+            webrtcConfig: wrtcParams.webrtcConfig,
+            processingTimeout: wrtcParams.processingTimeout,
+            requestedPlan: wrtcParams.requestedPlan,
+            requestedRegion: wrtcParams.requestedRegion
           }
         });
 
@@ -271,7 +374,12 @@ export const connectors = {
    *       imageInputName: wrtcParams.imageInputName,
    *       streamOutputNames: wrtcParams.streamOutputNames,
    *       dataOutputNames: wrtcParams.dataOutputNames,
-   *       threadPoolWorkers: wrtcParams.threadPoolWorkers
+   *       threadPoolWorkers: wrtcParams.threadPoolWorkers,
+   *       workflowsParameters: wrtcParams.workflowsParameters,
+   *       webrtcConfig: wrtcParams.webrtcConfig,
+   *       processingTimeout: wrtcParams.processingTimeout,
+   *       requestedPlan: wrtcParams.requestedPlan,
+   *       requestedRegion: wrtcParams.requestedRegion
    *     }
    *   });
    *   res.json(answer);
