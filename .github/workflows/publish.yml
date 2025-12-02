@@ -57,7 +57,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Bump version
-        run: npm version ${{ inputs.version_bump }} -m "chore: release v%s"
+        run: npm version "${{ inputs.version_bump }}" -m "chore: release v%s"
 
       - name: Push version commit and tag
         if: ${{ inputs.dry_run == false }}
