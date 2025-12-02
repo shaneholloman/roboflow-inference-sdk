@@ -24,8 +24,10 @@ jobs:
     # Only allow publishing from master branch
     # TODO: Remove publish-actin before merging
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/publish-actin'
+    environment: release
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +38,9 @@ jobs:
           node-version: '20'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -61,8 +66,6 @@ jobs:
       - name: Publish to npm
         if: ${{ inputs.dry_run == false }}
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         if: ${{ inputs.dry_run == false }}
