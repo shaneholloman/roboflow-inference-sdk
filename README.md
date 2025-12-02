@@ -1,6 +1,6 @@
 # @roboflow/inference-sdk
 
-Lightweight client for Roboflow's hosted inference API with WebRTC streaming support for real-time computer vision in the browser.
+Lightweight JS client for Roboflow's hosted inference API with WebRTC streaming support for real-time computer vision in the browser.
 
 ## Installation
 
