@@ -318,9 +318,9 @@ export class InferenceHTTPClient {
    */
   async fetchTurnConfig(): Promise<RTCIceServerConfig[] | null> {
     // // Only fetch TURN config for Roboflow serverless URLs
-    // if (!ROBOFLOW_SERVERLESS_URLS.includes(this.serverUrl)) {
-    //   return null;
-    // }
+    if (!ROBOFLOW_SERVERLESS_URLS.includes(this.serverUrl)) {
+      return null;
+    }
     try {
       const response = await fetch(
         `${RF_API_BASE_URL}/webrtc_turn_config?api_key=${this.apiKey}`,
