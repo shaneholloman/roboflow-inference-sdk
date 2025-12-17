@@ -41,6 +41,12 @@ export interface WebRTCWorkerConfig {
    * @example "us"
    */
   requestedRegion?: string;
+  /**
+   * Set to false for file upload mode (batch processing).
+   * When false, server processes all frames sequentially instead of dropping frames.
+   * @default true
+   */
+  realtimeProcessing?: boolean;
 }
 
 /**
@@ -116,6 +122,12 @@ export interface WebRTCParams {
    * @example "us"
    */
   requestedRegion?: string;
+  /**
+   * Set to false for file upload mode (batch processing).
+   * When false, server processes all frames sequentially instead of dropping frames.
+   * @default true
+   */
+  realtimeProcessing?: boolean;
 }
 
 export interface Connector {
@@ -214,8 +226,9 @@ export class InferenceHTTPClient {
       iceServers,
       processingTimeout,
       requestedPlan,
-      requestedRegion
-    } = config;
+      requestedRegion,
+      realtimeProcessing = true
+    } = config as any;
 
     // Build workflow_configuration based on what's provided
     const workflowConfiguration: any = {
@@ -237,7 +250,7 @@ export class InferenceHTTPClient {
     const payload: Record<string, any> = {
       workflow_configuration: workflowConfiguration,
       api_key: this.apiKey,
-      webrtc_realtime_processing: true,
+      webrtc_realtime_processing: realtimeProcessing,
       webrtc_offer: {
         sdp: offer.sdp,
         type: offer.type
@@ -257,7 +270,6 @@ export class InferenceHTTPClient {
     if (requestedRegion !== undefined) {
       payload.requested_region = requestedRegion;
     }
-    console.trace("payload", payload);
     const response = await fetch(`${this.serverUrl}/initialise_webrtc_worker`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -305,11 +317,10 @@ export class InferenceHTTPClient {
    * ```
    */
   async fetchTurnConfig(): Promise<RTCIceServerConfig[] | null> {
-    // Only fetch TURN config for Roboflow serverless URLs
+    // // Only fetch TURN config for Roboflow serverless URLs
     if (!ROBOFLOW_SERVERLESS_URLS.includes(this.serverUrl)) {
       return null;
     }
-
     try {
       const response = await fetch(
         `${RF_API_BASE_URL}/webrtc_turn_config?api_key=${this.apiKey}`,
@@ -399,7 +410,7 @@ export const connectors = {
 
     return {
       connectWrtc: async (offer: WebRTCOffer, wrtcParams: WebRTCParams): Promise<WebRTCWorkerResponse> => {
-        console.log("wrtcParams", wrtcParams);
+        console.debug("wrtcParams", wrtcParams);
         const answer = await client.initializeWebrtcWorker({
           offer,
           workflowSpec: wrtcParams.workflowSpec,
@@ -414,7 +425,8 @@ export const connectors = {
             iceServers: wrtcParams.iceServers,
             processingTimeout: wrtcParams.processingTimeout,
             requestedPlan: wrtcParams.requestedPlan,
-            requestedRegion: wrtcParams.requestedRegion
+            requestedRegion: wrtcParams.requestedRegion,
+            realtimeProcessing: wrtcParams.realtimeProcessing
           }
         });
 
