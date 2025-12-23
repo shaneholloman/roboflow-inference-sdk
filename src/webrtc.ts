@@ -155,7 +155,8 @@ const DEFAULT_ICE_SERVERS: RTCIceServerConfig[] = [
 async function preparePeerConnection(
   localStream?: MediaStream,
   file?: File,
-  customIceServers?: RTCIceServerConfig[]
+  customIceServers?: RTCIceServerConfig[],
+  rtspUrl?: string
 ): Promise<{
   pc: RTCPeerConnection;
   offer: RTCSessionDescriptionInit;
@@ -163,9 +164,16 @@ async function preparePeerConnection(
   dataChannel: RTCDataChannel;
   uploadChannel?: RTCDataChannel;
 }> {
-  if (!localStream && !file || (localStream && file)) {
-    throw new Error("Either localStream or file must be provided, but not both");
+  // Validate: exactly one source type must be provided
+  const hasLocalStream = !!localStream;
+  const hasFile = !!file;
+  const hasRtspUrl = !!rtspUrl;
+  const sourceCount = [hasLocalStream, hasFile, hasRtspUrl].filter(Boolean).length;
+
+  if (sourceCount !== 1) {
+    throw new Error("Exactly one of localStream, file, or rtspUrl must be provided");
   }
+
   const iceServers = customIceServers ?? DEFAULT_ICE_SERVERS;
 
   const pc = new RTCPeerConnection({
@@ -191,6 +199,7 @@ async function preparePeerConnection(
       pc.addTrack(track, localStream);
     });
   }
+  // Note: For RTSP, no local tracks are added (receive-only mode)
 
   // Setup remote stream listener
   const remoteStreamPromise = setupRemoteStreamListener(pc);
@@ -200,7 +209,7 @@ async function preparePeerConnection(
     ordered: true
   });
 
-  // Create upload datachannel for file uploads
+  // Create upload datachannel for file uploads (not needed for RTSP)
   let uploadChannel: RTCDataChannel | undefined;
   if (file) {
     uploadChannel = pc.createDataChannel("video_upload");
@@ -549,7 +558,8 @@ export class RFWebRTCConnection {
  * @private
  */
 interface BaseUseStreamParams {
-  source: MediaStream | File;
+  source?: MediaStream | File;
+  rtspUrl?: string;
   connector: Connector;
   wrtcParams: WebRTCParams;
   onData?: (data: WebRTCOutputData) => void;
@@ -560,6 +570,7 @@ interface BaseUseStreamParams {
 
 async function baseUseStream({
   source,
+  rtspUrl,
   connector,
   wrtcParams,
   onData,
@@ -572,9 +583,11 @@ async function baseUseStream({
     throw new Error("connector must have a connectWrtc method");
   }
 
-  const isFile = source instanceof File;
-  const localStream = isFile ? undefined : source;
-  const file = isFile ? source : undefined;
+  // Determine source type
+  const isRtsp = !!rtspUrl;
+  const isFile = !isRtsp && source instanceof File;
+  const localStream = !isRtsp && !isFile && source ? (source as MediaStream) : undefined;
+  const file = isFile ? (source as File) : undefined;
 
   // Step 1: Determine ICE servers to use
   // Priority: 1) User-provided in wrtcParams, 2) From connector.getIceServers(), 3) Defaults
@@ -595,15 +608,18 @@ async function baseUseStream({
   const { pc, offer, remoteStreamPromise, dataChannel, uploadChannel } = await preparePeerConnection(
     localStream,
     file,
-    iceServers
+    iceServers,
+    rtspUrl
   );
 
   // Update wrtcParams with resolved iceServers so server also uses them
   // For file uploads, default to batch mode (realtimeProcessing: false)
+  // For RTSP, default to realtime processing
   const resolvedWrtcParams = {
     ...wrtcParams,
     iceServers: iceServers,
-    realtimeProcessing: wrtcParams.realtimeProcessing ?? !isFile
+    realtimeProcessing: wrtcParams.realtimeProcessing ?? !isFile,
+    rtspUrl: rtspUrl
   };
 
   // Step 3: Call connector.connectWrtc to exchange SDP and get answer
@@ -813,5 +829,74 @@ export async function useVideoFile({
     onData,
     onComplete,
     onFileUploadProgress: onUploadProgress
+  });
+}
+
+/**
+ * Parameters for useRtspStream function
+ */
+export interface UseRtspStreamParams {
+  /** RTSP URL for server-side video capture (e.g., "rtsp://camera.local/stream") */
+  rtspUrl: string;
+  /** Connector for WebRTC signaling */
+  connector: Connector;
+  /** WebRTC parameters for the workflow */
+  wrtcParams: WebRTCParams;
+  /** Callback for inference results */
+  onData?: (data: WebRTCOutputData) => void;
+}
+
+/**
+ * Connect to an RTSP stream for inference processing
+ *
+ * Creates a WebRTC connection where the server captures video from an RTSP URL
+ * and sends processed video back to the client. This is a receive-only mode -
+ * no video is sent from the browser to the server.
+ *
+ * @param params - Connection parameters
+ * @returns Promise resolving to RFWebRTCConnection
+ *
+ * @example
+ * ```typescript
+ * import { connectors, webrtc } from '@roboflow/inference-sdk';
+ *
+ * const connector = connectors.withApiKey("your-api-key");
+ * const connection = await webrtc.useRtspStream({
+ *   rtspUrl: "rtsp://camera.local/stream",
+ *   connector,
+ *   wrtcParams: {
+ *     workflowSpec: { ... },
+ *     imageInputName: "image",
+ *     dataOutputNames: ["predictions"]
+ *   },
+ *   onData: (data) => {
+ *     console.log("Inference results:", data);
+ *   }
+ * });
+ *
+ * // Get processed video stream from server
+ * const remoteStream = await connection.remoteStream();
+ * videoElement.srcObject = remoteStream;
+ *
+ * // When done
+ * await connection.cleanup();
+ * ```
+ */
+export async function useRtspStream({
+  rtspUrl,
+  connector,
+  wrtcParams,
+  onData
+}: UseRtspStreamParams): Promise<RFWebRTCConnection> {
+  // Validate RTSP URL format
+  if (!rtspUrl.startsWith("rtsp://") && !rtspUrl.startsWith("rtsps://")) {
+    throw new Error("Invalid RTSP URL: must start with rtsp:// or rtsps://");
+  }
+
+  return baseUseStream({
+    rtspUrl,
+    connector,
+    wrtcParams,
+    onData
   });
 }

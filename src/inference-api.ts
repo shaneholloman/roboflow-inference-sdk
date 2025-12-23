@@ -47,6 +47,13 @@ export interface WebRTCWorkerConfig {
    * @default true
    */
   realtimeProcessing?: boolean;
+  /**
+   * RTSP URL for server-side video capture.
+   * When provided, the server captures video from this RTSP stream instead of receiving
+   * video from the client. Supports credentials in URL format: rtsp://user:pass@host/stream
+   * @example "rtsp://camera.local/stream"
+   */
+  rtspUrl?: string;
 }
 
 /**
@@ -128,6 +135,13 @@ export interface WebRTCParams {
    * @default true
    */
   realtimeProcessing?: boolean;
+  /**
+   * RTSP URL for server-side video capture.
+   * When provided, the server captures video from this RTSP stream instead of receiving
+   * video from the client. Supports credentials in URL format: rtsp://user:pass@host/stream
+   * @example "rtsp://camera.local/stream"
+   */
+  rtspUrl?: string;
 }
 
 export interface Connector {
@@ -227,7 +241,8 @@ export class InferenceHTTPClient {
       processingTimeout,
       requestedPlan,
       requestedRegion,
-      realtimeProcessing = true
+      realtimeProcessing = true,
+      rtspUrl
     } = config as any;
 
     // Build workflow_configuration based on what's provided
@@ -269,6 +284,10 @@ export class InferenceHTTPClient {
     }
     if (requestedRegion !== undefined) {
       payload.requested_region = requestedRegion;
+    }
+    // Add RTSP URL for server-side video capture
+    if (rtspUrl) {
+      payload.rtsp_url = rtspUrl;
     }
     const response = await fetch(`${this.serverUrl}/initialise_webrtc_worker`, {
       method: "POST",
@@ -426,7 +445,8 @@ export const connectors = {
             processingTimeout: wrtcParams.processingTimeout,
             requestedPlan: wrtcParams.requestedPlan,
             requestedRegion: wrtcParams.requestedRegion,
-            realtimeProcessing: wrtcParams.realtimeProcessing
+            realtimeProcessing: wrtcParams.realtimeProcessing,
+            rtspUrl: wrtcParams.rtspUrl
           }
         });
 
