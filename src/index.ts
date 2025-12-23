@@ -9,7 +9,7 @@
 export * from './inference-api';
 
 // Re-export WebRTC types for convenience
-export type { WebRTCOutputData } from './webrtc-types';
+export type { WebRTCOutputData, WebRTCHooks } from './webrtc-types';
 
 // Export webrtc and streams as namespace objects
 import * as webrtc from './webrtc';

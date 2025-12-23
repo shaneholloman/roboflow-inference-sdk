@@ -1,11 +1,11 @@
 
 import { InferenceHTTPClient, Connector, WebRTCParams, RTCIceServerConfig } from "./inference-api";
 import { stopStream } from "./streams";
-import { WebRTCOutputData } from "./webrtc-types";
+import { WebRTCOutputData, WebRTCHooks } from "./webrtc-types";
 import { FileUploader } from "./video-upload";
 
 // Re-export shared types
-export type { WebRTCVideoMetadata, WebRTCOutputData } from "./webrtc-types";
+export type { WebRTCVideoMetadata, WebRTCOutputData, WebRTCHooks } from "./webrtc-types";
 
 // Re-export FileUploader from video-upload
 export { FileUploader } from "./video-upload";
@@ -96,6 +96,8 @@ export interface UseStreamParams {
   wrtcParams: WebRTCParams;
   onData?: (data: WebRTCOutputData) => void;
   options?: UseStreamOptions;
+  /** Lifecycle hooks for customizing WebRTC behavior */
+  hooks?: WebRTCHooks;
 }
 
 async function waitForIceGathering(pc: RTCPeerConnection, timeoutMs = 6000): Promise<void> {
@@ -156,7 +158,8 @@ async function preparePeerConnection(
   localStream?: MediaStream,
   file?: File,
   customIceServers?: RTCIceServerConfig[],
-  rtspUrl?: string
+  rtspUrl?: string,
+  hooks?: WebRTCHooks
 ): Promise<{
   pc: RTCPeerConnection;
   offer: RTCSessionDescriptionInit;
@@ -180,6 +183,11 @@ async function preparePeerConnection(
     iceServers: iceServers as RTCIceServer[]
   });
 
+  // Call onPeerConnectionCreated hook
+  if (hooks?.onPeerConnectionCreated) {
+    await hooks.onPeerConnectionCreated(pc);
+  }
+
   // Add transceiver for receiving remote video (BEFORE adding tracks - order matters!)
   try {
     pc.addTransceiver("video", { direction: "recvonly" });
@@ -189,15 +197,14 @@ async function preparePeerConnection(
 
   if (localStream) {
     // Add local tracks
-    localStream.getVideoTracks().forEach(track => {
-      try {
-        // @ts-ignore - contentHint is not in all TypeScript definitions
-        track.contentHint = "detail";
-      } catch (e) {
-        // Ignore if contentHint not supported
+    for (const track of localStream.getVideoTracks()) {
+      const sender = pc.addTrack(track, localStream);
+
+      // Call onTrackAdded hook
+      if (hooks?.onTrackAdded) {
+        await hooks.onTrackAdded(track, sender, pc);
       }
-      pc.addTrack(track, localStream);
-    });
+    }
   }
   // Note: For RTSP, no local tracks are added (receive-only mode)
 
@@ -216,7 +223,16 @@ async function preparePeerConnection(
   }
 
   // Create offer
-  const offer = await pc.createOffer();
+  let offer = await pc.createOffer();
+
+  // Call onOfferCreated hook to allow SDP modification
+  if (hooks?.onOfferCreated) {
+    const modifiedOffer = await hooks.onOfferCreated(offer);
+    if (modifiedOffer) {
+      offer = modifiedOffer;
+    }
+  }
+
   await pc.setLocalDescription(offer);
 
   // Wait for ICE gathering
@@ -292,14 +308,26 @@ function waitForChannelOpen(channel: RTCDataChannel, timeoutMs = 30000): Promise
  * or file-based batch processing.
  */
 export class RFWebRTCConnection {
-  private pc: RTCPeerConnection;
+  /**
+   * The underlying RTCPeerConnection.
+   * Exposed for advanced use cases like getting stats or accessing senders.
+   */
+  public readonly peerConnection: RTCPeerConnection;
   private _localStream?: MediaStream;
   private remoteStreamPromise: Promise<MediaStream>;
   private pipelineId: string | null;
   private apiKey: string | null;
-  private dataChannel: RTCDataChannel;
+  /**
+   * The data channel used for receiving inference results.
+   * Exposed for advanced use cases.
+   */
+  public readonly dataChannel: RTCDataChannel;
   private reassembler: ChunkReassembler;
-  private uploadChannel?: RTCDataChannel;
+  /**
+   * The data channel used for uploading video files (only available in file upload mode).
+   * Exposed for advanced use cases.
+   */
+  public readonly uploadChannel?: RTCDataChannel;
   private uploader?: FileUploader;
   private onComplete?: () => void;
 
@@ -317,7 +345,7 @@ export class RFWebRTCConnection {
       onComplete?: () => void;
     }
   ) {
-    this.pc = pc;
+    this.peerConnection = pc;
     this._localStream = options?.localStream;
     this.remoteStreamPromise = remoteStreamPromise;
     this.pipelineId = pipelineId;
@@ -441,8 +469,8 @@ export class RFWebRTCConnection {
     }
 
     // Close peer connection
-    if (this.pc && this.pc.connectionState !== "closed") {
-      this.pc.close();
+    if (this.peerConnection && this.peerConnection.connectionState !== "closed") {
+      this.peerConnection.close();
     }
 
     // Stop local stream if present
@@ -566,6 +594,7 @@ interface BaseUseStreamParams {
   onComplete?: () => void;
   onFileUploadProgress?: (bytesUploaded: number, totalBytes: number) => void;
   options?: UseStreamOptions;
+  hooks?: WebRTCHooks;
 }
 
 async function baseUseStream({
@@ -576,7 +605,8 @@ async function baseUseStream({
   onData,
   onComplete,
   onFileUploadProgress,
-  options = {}
+  options = {},
+  hooks
 }: BaseUseStreamParams): Promise<RFWebRTCConnection> {
   // Validate connector
   if (!connector || typeof connector.connectWrtc !== "function") {
@@ -609,7 +639,8 @@ async function baseUseStream({
     localStream,
     file,
     iceServers,
-    rtspUrl
+    rtspUrl,
+    hooks
   );
 
   // Update wrtcParams with resolved iceServers so server also uses them
@@ -740,7 +771,8 @@ export async function useStream({
   connector,
   wrtcParams,
   onData,
-  options = {}
+  options = {},
+  hooks
 }: UseStreamParams): Promise<RFWebRTCConnection> {
   if (source instanceof File) {
     throw new Error("useStream requires a MediaStream. Use useVideoFile for File uploads.");
@@ -751,7 +783,8 @@ export async function useStream({
     connector,
     wrtcParams,
     onData,
-    options
+    options,
+    hooks
   });
 }
 
@@ -771,6 +804,8 @@ export interface UseVideoFileParams {
   onUploadProgress?: (bytesUploaded: number, totalBytes: number) => void;
   /** Callback when processing completes (datachannel closes) */
   onComplete?: () => void;
+  /** Lifecycle hooks for customizing WebRTC behavior */
+  hooks?: WebRTCHooks;
 }
 
 /**
@@ -817,7 +852,8 @@ export async function useVideoFile({
   wrtcParams,
   onData,
   onUploadProgress,
-  onComplete
+  onComplete,
+  hooks
 }: UseVideoFileParams): Promise<RFWebRTCConnection> {
   return baseUseStream({
     source: file,
@@ -828,7 +864,8 @@ export async function useVideoFile({
     },
     onData,
     onComplete,
-    onFileUploadProgress: onUploadProgress
+    onFileUploadProgress: onUploadProgress,
+    hooks
   });
 }
 
@@ -844,6 +881,8 @@ export interface UseRtspStreamParams {
   wrtcParams: WebRTCParams;
   /** Callback for inference results */
   onData?: (data: WebRTCOutputData) => void;
+  /** Lifecycle hooks for customizing WebRTC behavior */
+  hooks?: WebRTCHooks;
 }
 
 /**
@@ -886,7 +925,8 @@ export async function useRtspStream({
   rtspUrl,
   connector,
   wrtcParams,
-  onData
+  onData,
+  hooks
 }: UseRtspStreamParams): Promise<RFWebRTCConnection> {
   // Validate RTSP URL format
   if (!rtspUrl.startsWith("rtsp://") && !rtspUrl.startsWith("rtsps://")) {
@@ -897,6 +937,7 @@ export async function useRtspStream({
     rtspUrl,
     connector,
     wrtcParams,
-    onData
+    onData,
+    hooks
   });
 }

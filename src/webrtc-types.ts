@@ -43,3 +43,69 @@ export interface WebRTCOutputData {
   /** Signals end of video file processing */
   processing_complete: boolean;
 }
+
+/**
+ * Lifecycle hooks for customizing WebRTC connection behavior.
+ *
+ * These hooks allow consumers to inject custom logic at key stages
+ * of the WebRTC connection lifecycle. For other customization (like
+ * connection state monitoring), add listeners directly to the
+ * peerConnection in onPeerConnectionCreated.
+ *
+ * @example
+ * ```typescript
+ * const conn = await useStream({
+ *   // ...
+ *   hooks: {
+ *     onPeerConnectionCreated: (pc) => {
+ *       // Add connection state listener
+ *       pc.addEventListener('connectionstatechange', () => {
+ *         console.log('State:', pc.connectionState);
+ *         if (pc.connectionState === 'connected') {
+ *           // Configure sender parameters after connection
+ *         }
+ *       });
+ *     },
+ *     onTrackAdded: (track, sender, pc) => {
+ *       track.contentHint = 'motion';
+ *       // Apply codec preferences...
+ *     },
+ *     onOfferCreated: (offer) => {
+ *       // Munge SDP for bitrate hints
+ *       return { ...offer, sdp: mungedSdp };
+ *     }
+ *   }
+ * });
+ * ```
+ */
+export interface WebRTCHooks {
+  /**
+   * Called after RTCPeerConnection is created, before tracks are added.
+   * Use this to configure ICE handlers, add event listeners, or set up
+   * custom connection monitoring.
+   *
+   * @param pc - The newly created RTCPeerConnection
+   */
+  onPeerConnectionCreated?: (pc: RTCPeerConnection) => void | Promise<void>;
+
+  /**
+   * Called after a video track is added to the connection but before offer creation.
+   * Use this to configure codec preferences, set content hints, or apply
+   * track-level settings.
+   *
+   * @param track - The video track that was added
+   * @param sender - The RTCRtpSender for the track
+   * @param pc - The peer connection
+   */
+  onTrackAdded?: (track: MediaStreamTrack, sender: RTCRtpSender, pc: RTCPeerConnection) => void | Promise<void>;
+
+  /**
+   * Called after the SDP offer is created, before setting local description.
+   * Use this to modify the SDP (e.g., add bitrate hints, filter codecs).
+   * Return a modified offer or undefined/void to use the original.
+   *
+   * @param offer - The created SDP offer
+   * @returns Modified offer, or undefined to use original
+   */
+  onOfferCreated?: (offer: RTCSessionDescriptionInit) => RTCSessionDescriptionInit | void | Promise<RTCSessionDescriptionInit | void>;
+}
