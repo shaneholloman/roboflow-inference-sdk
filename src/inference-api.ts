@@ -54,11 +54,7 @@ export interface WebRTCWorkerConfig {
    * @example "rtsp://camera.local/stream"
    */
   rtspUrl?: string;
-  /**
-   * Extra fields to include in the initialization payload.
-   * Useful for passing custom flags like is_preview.
-   * @example { is_preview: true }
-   */
+
   extraPayload?: Record<string, unknown>;
 }
 
