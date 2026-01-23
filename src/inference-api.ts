@@ -54,6 +54,8 @@ export interface WebRTCWorkerConfig {
    * @example "rtsp://camera.local/stream"
    */
   rtspUrl?: string;
+
+  extraPayload?: Record<string, unknown>;
 }
 
 /**
@@ -142,6 +144,7 @@ export interface WebRTCParams {
    * @example "rtsp://camera.local/stream"
    */
   rtspUrl?: string;
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface Connector {
@@ -244,7 +247,8 @@ export class InferenceHTTPClient {
       requestedPlan,
       requestedRegion,
       realtimeProcessing = true,
-      rtspUrl
+      rtspUrl,
+      extraPayload
     } = config as any;
 
     // Build workflow_configuration based on what's provided
@@ -290,6 +294,9 @@ export class InferenceHTTPClient {
     // Add RTSP URL for server-side video capture
     if (rtspUrl) {
       payload.rtsp_url = rtspUrl;
+    }
+    if (extraPayload) {
+      Object.assign(payload, extraPayload);
     }
     const response = await fetch(`${this.serverUrl}/initialise_webrtc_worker`, {
       method: "POST",
@@ -448,7 +455,8 @@ export const connectors = {
             requestedPlan: wrtcParams.requestedPlan,
             requestedRegion: wrtcParams.requestedRegion,
             realtimeProcessing: wrtcParams.realtimeProcessing,
-            rtspUrl: wrtcParams.rtspUrl
+            rtspUrl: wrtcParams.rtspUrl,
+            extraPayload: wrtcParams.extraPayload
           }
         });
 
