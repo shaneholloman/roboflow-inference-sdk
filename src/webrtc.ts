@@ -86,6 +86,36 @@ export function parseBinaryHeader(buffer: ArrayBuffer): { frameId: number; chunk
   return { frameId, chunkIndex, totalChunks, payload };
 }
 
+/**
+ * Decompress gzip-compressed data using browser's DecompressionStream API
+ */
+async function decompressGzip(compressed: Uint8Array): Promise<Uint8Array> {
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  writer.write(compressed as unknown as BufferSource);
+  writer.close();
+  
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  
+  // Concatenate all chunks
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  return result;
+}
+
 export interface UseStreamOptions {
   disableInputStreamDownscaling?: boolean;
 }
@@ -367,31 +397,40 @@ export class RFWebRTCConnection {
     // Setup data channel event listeners
     if (onData) {
       this.dataChannel.addEventListener("message", (messageEvent: MessageEvent) => {
-        try {
-          // Handle binary protocol with chunking
-          if (messageEvent.data instanceof ArrayBuffer) {
-            const { frameId, chunkIndex, totalChunks, payload } = parseBinaryHeader(messageEvent.data);
-            const completePayload = this.reassembler.processChunk(frameId, chunkIndex, totalChunks, payload);
+        (async () => {
+          try {
+            // Handle binary protocol with chunking
+            if (messageEvent.data instanceof ArrayBuffer) {
+              const { frameId, chunkIndex, totalChunks, payload } = parseBinaryHeader(messageEvent.data);
+              const completePayload = this.reassembler.processChunk(frameId, chunkIndex, totalChunks, payload);
 
-            if (completePayload) {
-              // Decode UTF-8 JSON payload
-              const decoder = new TextDecoder("utf-8");
-              const jsonString = decoder.decode(completePayload);
-              const data = JSON.parse(jsonString);
-              // Wait for onData completion (supports async handlers) before ACKing the frame.
-              Promise.resolve(onData(data))
-                .finally(() => {
-                  this.maybeSendAck(frameId);
-                })
+              if (completePayload) {
+                // Check if payload is gzip compressed (magic bytes: 0x1f 0x8b)
+                let jsonBytes: Uint8Array;
+                if (completePayload[0] === 0x1f && completePayload[1] === 0x8b) {
+                  // Decompress gzip
+                  jsonBytes = await decompressGzip(completePayload);
+                } else {
+                  jsonBytes = completePayload;
+                }
+                
+                // Decode UTF-8 JSON payload
+                const decoder = new TextDecoder("utf-8");
+                const jsonString = decoder.decode(jsonBytes);
+                const data = JSON.parse(jsonString);
+                // Wait for onData completion (supports async handlers) before ACKing the frame.
+                await Promise.resolve(onData(data));
+                this.maybeSendAck(frameId);
+              }
+            } else {
+              // Fallback for string messages (shouldn't happen with new protocol)
+              const data = JSON.parse(messageEvent.data);
+              onData(data);
             }
-          } else {
-            // Fallback for string messages (shouldn't happen with new protocol)
-            const data = JSON.parse(messageEvent.data);
-            onData(data);
+          } catch (err) {
+            console.error("[RFWebRTC] Failed to parse data channel message:", err);
           }
-        } catch (err) {
-          console.error("[RFWebRTC] Failed to parse data channel message:", err);
-        }
+        })();
       });
 
       this.dataChannel.addEventListener("error", (error) => {
@@ -646,10 +685,9 @@ async function baseUseStream({
       const turnConfig = await connector.getIceServers();
       if (turnConfig && turnConfig.length > 0) {
         iceServers = turnConfig;
-        console.log("[RFWebRTC] Using TURN servers from connector");
       }
     } catch (err) {
-      console.warn("[RFWebRTC] Failed to fetch TURN config, using defaults:", err);
+      // Failed to fetch TURN config, using defaults
     }
   }
 
