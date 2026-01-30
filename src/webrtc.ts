@@ -687,7 +687,7 @@ async function baseUseStream({
         iceServers = turnConfig;
       }
     } catch (err) {
-      // Failed to fetch TURN config, using defaults
+      console.warn("[RFWebRTC] Failed to fetch TURN config, using defaults:", err);
     }
   }
 
